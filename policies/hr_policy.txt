@@ -1,0 +1,97 @@
+HR POLICY DOCUMENT
+Company Internal Policy — Human Resources
+Last Updated: 2024-01-01
+Version: 2.3
+
+=============================================================
+SECTION 1: VACATION AND TIME OFF
+=============================================================
+
+1.1 Annual Vacation Entitlement
+All full-time employees are entitled to 15 vacation days per year during their first two years of employment. After two years of service, employees receive 20 vacation days per year. After five years of service, employees receive 25 vacation days per year. Part-time employees receive vacation entitlement on a pro-rated basis.
+
+1.2 Vacation Accrual
+Vacation days accrue monthly at a rate of 1.25 days per month (for 15-day entitlement), 1.67 days per month (for 20-day entitlement), or 2.08 days per month (for 25-day entitlement). Employees may carry over a maximum of 5 unused vacation days to the following year. Any accrued days beyond 5 will be forfeited at year-end.
+
+1.3 Vacation Requests
+Employees must submit vacation requests at least 2 weeks in advance for requests of 3 or fewer days, and at least 4 weeks in advance for longer periods. Requests are subject to manager approval and business needs. Vacation during notice periods is not permitted unless explicitly approved by HR.
+
+1.4 Statutory Holidays
+Employees are entitled to all statutory holidays as defined by provincial law. When a statutory holiday falls on a weekend, the next working day is observed.
+
+=============================================================
+SECTION 2: REMOTE WORK POLICY
+=============================================================
+
+2.1 Eligibility
+Remote work is available to full-time and part-time employees in roles that do not require a physical presence. Eligibility is determined by the employee's manager in consultation with HR.
+
+2.2 Remote Work Frequency
+Employees may work remotely up to 3 days per week. A minimum of 2 in-office days per week is required for all eligible employees. Exceptions to the 2-day in-office requirement may be granted by HR for medical accommodations or special circumstances only.
+
+2.3 Home Office Requirements
+Employees working remotely must maintain a dedicated, private workspace with a reliable internet connection (minimum 25 Mbps). Employees are responsible for their home internet costs. The company provides a one-time home office equipment allowance of $500 for eligible employees, subject to manager and HR approval.
+
+2.4 Remote Work Agreement
+Employees wishing to work remotely must complete a Remote Work Agreement Form, available on the HR portal. The agreement must be reviewed and signed by both the employee and their manager before remote work commences.
+
+=============================================================
+SECTION 3: EXPENSE REIMBURSEMENT
+=============================================================
+
+3.1 General Policy
+The company reimburses employees for reasonable and necessary business expenses incurred while performing their job duties. Personal expenses are not eligible for reimbursement.
+
+3.2 Expense Submission
+All expense claims must be submitted within 30 days of the expense being incurred. Claims submitted after 30 days will not be reimbursed except in exceptional circumstances approved by Finance.
+
+3.3 Approval Thresholds
+- Expenses under $100: Approved by direct manager
+- Expenses $100–$499: Approved by direct manager and department head
+- Expenses $500 and above: Require approval from direct manager, department head, and Finance Director
+Employees must obtain pre-approval for any single expense exceeding $500 before incurring the cost.
+
+3.4 Required Documentation
+All expense claims require original receipts. For expenses over $50, a brief description of the business purpose must be included. For meals with clients or colleagues, the names and business purpose must be documented.
+
+3.5 Travel Expenses
+Air travel must be booked at least 14 days in advance when possible and in economy class for domestic flights under 6 hours. Business class travel requires VP-level approval. Hotel accommodation should not exceed $200/night in major cities unless no alternatives are available.
+
+=============================================================
+SECTION 4: PERFORMANCE REVIEWS
+=============================================================
+
+4.1 Review Cycle
+Performance reviews are conducted annually each December, with a mid-year check-in in June. New employees receive a 90-day review in addition to the annual cycle.
+
+4.2 Performance Ratings
+Employees are rated on a 1–5 scale:
+- Rating 5 (Exceptional): Significantly exceeds all expectations. Eligible for maximum bonus and acceleration in compensation review.
+- Rating 4 (Exceeds Expectations): Consistently exceeds expectations in key areas. Eligible for above-target bonus.
+- Rating 3 (Meets Expectations): Fully meets all role requirements. Eligible for standard bonus.
+- Rating 2 (Needs Improvement): Does not consistently meet expectations. A Performance Improvement Plan (PIP) may be initiated. No bonus is awarded.
+- Rating 1 (Unsatisfactory): Fails to meet core expectations. A mandatory Performance Improvement Plan is initiated immediately. Continued employment is at risk. No bonus is awarded.
+
+4.3 Performance Improvement Plan (PIP)
+Employees receiving a rating of 1 or 2 will be placed on a Performance Improvement Plan. The PIP will outline specific, measurable goals with a 90-day improvement window. Progress is reviewed at 30, 60, and 90 days. Failure to meet PIP objectives may result in termination of employment.
+
+4.4 Compensation Reviews
+Compensation adjustments are made annually following the performance review cycle. Adjustments are based on performance rating, market data, and budget availability. Employees on a PIP are not eligible for compensation increases.
+
+=============================================================
+SECTION 5: LEAVE OF ABSENCE
+=============================================================
+
+5.1 Medical Leave
+Employees requiring medical leave must notify their manager and HR as soon as practicable. Short-term medical leave of up to 5 days does not require a doctor's note. Medical leave exceeding 5 consecutive days requires a doctor's note and an estimated return-to-work date.
+
+5.2 Parental Leave
+Parental leave is available to all eligible employees in accordance with provincial employment standards. Top-up pay provisions apply for the first 16 weeks of leave for employees with 12 or more months of service.
+
+5.3 Bereavement Leave
+Employees are entitled to 3 days of paid bereavement leave for the death of an immediate family member (spouse, child, parent, sibling). 1 day of paid leave is provided for extended family (grandparents, in-laws).
+
+=============================================================
+CONTACT
+=============================================================
+For questions about this policy, contact Human Resources at hr@company.com or ext. 1001.

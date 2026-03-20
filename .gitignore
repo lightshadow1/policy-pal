@@ -1,0 +1,23 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# uv
+.python-version
+
+# Runtime output
+audit_log.csv
+comparison_report.csv
+
+# Editor
+.DS_Store
+.idea/
+.vscode/

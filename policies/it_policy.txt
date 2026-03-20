@@ -1,0 +1,98 @@
+IT POLICY DOCUMENT
+Company Internal Policy — Information Technology
+Last Updated: 2024-01-01
+Version: 1.8
+
+=============================================================
+SECTION 1: DEVICE POLICY
+=============================================================
+
+1.1 Company-Issued Devices
+All employees in roles that require computing are issued a company laptop. Standard issue is a 13" or 15" laptop based on role requirements. Mobile phones are issued to employees in sales, executive, and on-call support roles only. All company devices remain the property of the company and must be returned upon termination of employment.
+
+1.2 Personal Device Use (BYOD)
+Employees may use personal devices for work purposes only if they have enrolled the device in the company Mobile Device Management (MDM) system. Enrollment requires IT department approval and installation of the company security profile. Personal devices used for work are subject to remote wipe of company data if the device is lost, stolen, or employment is terminated.
+
+1.3 Device Care and Loss
+Employees are responsible for the reasonable care of company-issued devices. Loss or theft of a device must be reported to IT within 2 hours of discovery. Damage due to negligence may result in the employee being charged for repair or replacement costs up to 50% of the device value.
+
+1.4 Software Installation
+Employees may not install unapproved software on company devices. All software installations must be requested through the IT helpdesk. Approved software is available via the Company App Store on your device. Development staff may request elevated installation privileges through their manager and the IT security team.
+
+=============================================================
+SECTION 2: DATA SECURITY POLICY
+=============================================================
+
+2.1 Data Classification
+Company data is classified into four levels:
+- Public: Information approved for external release (press releases, public website content)
+- Internal: General company information for employee use only
+- Confidential: Sensitive business information requiring restricted access (contracts, financial data, HR records)
+- Restricted: Highest sensitivity data requiring strict controls (customer PII, payment card data, trade secrets)
+
+2.2 Data Handling Requirements
+Public data may be shared freely within the guidelines of the Communications Policy. Internal data must not be shared outside the organization. Confidential data requires encryption at rest and in transit and must not be stored on personal devices. Restricted data requires end-to-end encryption, access logging, and must only be handled on company-approved systems.
+
+2.3 Password and Authentication Policy
+All company accounts require a password of minimum 12 characters including uppercase, lowercase, numbers, and special characters. Passwords must be changed every 90 days. Multi-factor authentication (MFA) is mandatory for all company systems and cannot be disabled. Employees must not share passwords under any circumstances, even with IT staff.
+
+2.4 Encryption
+All company laptops must have full-disk encryption enabled (FileVault on Mac, BitLocker on Windows). Sensitive data emailed externally must use the company-approved email encryption service. USB storage devices containing company data must be encrypted.
+
+=============================================================
+SECTION 3: NETWORK AND INTERNET USE
+=============================================================
+
+3.1 Acceptable Use
+Company network and internet access are provided for business purposes. Reasonable personal use is permitted provided it does not interfere with work duties, consume excessive bandwidth, or violate this policy. Prohibited activities include: accessing illegal content, streaming entertainment media on the corporate network during core business hours, cryptocurrency mining, and any activity that violates applicable laws.
+
+3.2 Remote Access
+Employees working remotely must connect to the company network via the approved VPN for accessing internal systems and confidential data. The VPN client is available through IT. Public Wi-Fi networks must always be used with the VPN active when handling company data.
+
+3.3 Social Media
+Employees may not share confidential or Restricted company information on social media. Employees who post about the company are expected to identify themselves as employees and make clear they are expressing personal views, not company positions.
+
+=============================================================
+SECTION 4: EMAIL AND COMMUNICATION
+=============================================================
+
+4.1 Email Retention
+Business emails must be retained for a minimum of 7 years in accordance with regulatory requirements. Employees must not delete emails related to ongoing legal matters or audits. The company email archival system automatically captures all emails sent and received on company accounts.
+
+4.2 Phishing and Social Engineering
+Employees must not click links or open attachments in unsolicited emails. Suspected phishing emails must be reported to IT security at security@company.com immediately. Employees who fall victim to phishing attacks must report the incident to IT within 1 hour.
+
+4.3 External Communication
+Employees communicating sensitive information externally via email must use the company encryption gateway. Customer data must never be included in email unless absolutely required by business need and encrypted.
+
+=============================================================
+SECTION 5: INCIDENT REPORTING
+=============================================================
+
+5.1 Security Incident Reporting
+Any suspected or confirmed security incident (data breach, device loss, unauthorized access, malware) must be reported to the IT Security team within 2 hours of discovery. After-hours incidents can be reported via the IT Security hotline at ext. 9911.
+
+5.2 Incident Response
+The IT Security team will triage all reported incidents within 4 business hours. Severity levels are assigned as: Critical (immediate response), High (4-hour response), Medium (24-hour response), Low (72-hour response). Employees must cooperate fully with any security investigation.
+
+5.3 Consequences of Policy Violations
+Violations of this IT policy may result in disciplinary action up to and including termination of employment. Violations that result in regulatory penalties or legal liability may result in civil or criminal action against the responsible employee.
+
+=============================================================
+SECTION 6: IT SUPPORT
+=============================================================
+
+6.1 Helpdesk
+IT support is available Monday–Friday 8:00 AM–6:00 PM via the IT helpdesk portal, email it-help@company.com, or phone ext. 2000. After-hours support for critical issues is available at ext. 2911.
+
+6.2 Standard Service Levels
+- Password resets: 15 minutes
+- Software installation requests: 1 business day
+- New device provisioning: 3 business days
+- Network access issues: 4 hours
+
+=============================================================
+CONTACT
+=============================================================
+For general IT support, contact the helpdesk at it-help@company.com or ext. 2000.
+For security incidents, contact it-security@company.com or ext. 9911.
