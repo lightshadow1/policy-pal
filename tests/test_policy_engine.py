@@ -298,6 +298,7 @@ class TestPolicyResponse:
         assert resp.guardrail_input_action == "PASS"
         assert resp.guardrail_output_action == "PASS"
         assert resp.guardrail_reason == ""
+        assert resp.confidence_reason == ""
         assert resp.grounding_score is None
         assert resp.relevance_score is None
 

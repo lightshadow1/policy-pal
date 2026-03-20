@@ -23,7 +23,7 @@ flowchart TD
     F --> G{Match Found?}
     G -- No --> H[NONE confidence\nEscalate to HR/IT]
     G -- Yes --> I[Grounded LLM Call\nClaude Haiku]
-    I --> J[Parse Confidence\nHIGH or LOW]
+    I --> J[Parse Confidence + Reason\nHIGH or LOW + explanation]
     J --> K[Write Audit Log\naudit_log.csv]
     K --> L[Return PolicyResponse]
     H --> K
@@ -65,7 +65,7 @@ flowchart TD
     H -- LLMError --> I[Fallback message\nEscalate]
     H -- OK --> J[Output Guardrail\nguardrails.check_output]
     J -- WARN --> K[Downgrade to LOW\nFlag for review]
-    J -- PASS --> L[HIGH/LOW confidence]
+    J -- PASS --> L[HIGH/LOW + confidence_reason]
     K --> M[Calculate Cost]
     L --> M
     G --> M
@@ -95,7 +95,7 @@ cp .env.example .env
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key from console.anthropic.com |
-| `SONNET_MODEL` | No | `claude-3-5-sonnet-20241022` | Model ID used by `compare_models.py` |
+| `SONNET_MODEL` | No | `claude-sonnet-4-5-20250929` | Model ID used by `compare_models.py` |
 | `LLM_MAX_RETRIES` | No | `2` | Retry attempts on transient LLM errors |
 | `LLM_REQUEST_TIMEOUT` | No | `30.0` | LLM call timeout in seconds |
 | `GUARDRAIL_GROUNDING_THRESHOLD` | No | `0.25` | Min grounding score before WARN |
@@ -143,7 +143,10 @@ automatically — no configuration needed.
 - **PII never reaches the LLM**: `policy_engine.py` scrubs input _before_ the
   LLM call. The original question is stored only in the audit log.
 - **Confidence from the model**: The prompt instructs the model to append
-  `CONFIDENCE: HIGH` or `CONFIDENCE: LOW`, which is parsed from the response.
+  `CONFIDENCE: HIGH — [reason]` or `CONFIDENCE: LOW — [reason]`. The level
+  and the one-sentence explanation are parsed separately and both stored in
+  `PolicyResponse.confidence_reason` and the audit log. The reason is
+  displayed in the UI directly below the confidence badge.
 - **Type hints throughout**: All functions have explicit type annotations.
 
 ## Code Style

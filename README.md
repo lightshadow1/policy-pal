@@ -100,6 +100,7 @@ Every `PolicyResponse` and audit row includes:
 |---|---|
 | `request_id` | Unique 12-char hex ID for request tracing |
 | `retrieval_score` | Keyword match count from policy retrieval |
+| `confidence_reason` | Model's one-sentence explanation of its confidence rating |
 | `latency_ms` | End-to-end pipeline latency |
 | `input_tokens` / `output_tokens` | Token counts from the LLM response |
 | `cost_usd` | Estimated cost (Haiku: $0.80/$4.00 per MTok) |
@@ -147,7 +148,7 @@ Every query writes a row to `audit_log.csv`:
 - `original_question` (unredacted — admin view only), `scrubbed_question`
 - `pii_detected` (type and count, never the value)
 - `source_document`, `retrieval_score`
-- `confidence`, `escalated`
+- `confidence`, `confidence_reason` (model's self-explanation), `escalated`
 - `latency_ms`, `input_tokens`, `output_tokens`, `cost_usd`
 - `guardrail_input_action`, `guardrail_output_action`, `guardrail_reason`
 - `grounding_score`, `relevance_score`

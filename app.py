@@ -128,6 +128,8 @@ with tab1:
                         st.warning("⚠️ Confidence: LOW")
                     else:
                         st.error("❌ Confidence: NONE")
+                    if result.confidence_reason:
+                        st.caption(result.confidence_reason)
 
                 with src_col:
                     if result.source and result.source != "none":

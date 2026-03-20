@@ -14,6 +14,7 @@ import csv
 import functools
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -76,11 +77,12 @@ class LLMError(Exception):
 # ── Internal LLM result ───────────────────────────────────────────────────────
 @dataclass
 class _LLMResult:
-    answer:        str
-    confidence:    str    # HIGH | LOW
-    latency_ms:    float
-    input_tokens:  int
-    output_tokens: int
+    answer:             str
+    confidence:         str   # HIGH | LOW
+    confidence_reason:  str   # one-sentence explanation from the model
+    latency_ms:         float
+    input_tokens:       int
+    output_tokens:      int
 
 
 # ── Data models ───────────────────────────────────────────────────────────────
@@ -106,6 +108,8 @@ class PolicyResponse:
     input_tokens:    int   = 0
     output_tokens:   int   = 0
     cost_usd:        float = 0.0
+    # ── Confidence explanation ─────────────────────────────────────────────────
+    confidence_reason:       str        = ""  # model's one-sentence self-explanation
     # ── Guardrail outcomes ────────────────────────────────────────────────────
     guardrail_input_action:  str        = "PASS"   # PASS | BLOCK
     guardrail_output_action: str        = "PASS"   # PASS | WARN | BLOCK
@@ -195,10 +199,10 @@ POLICY TEXT:
 EMPLOYEE QUESTION:
 {question}
 
-After your answer, on a new line write one of:
-CONFIDENCE: HIGH
-CONFIDENCE: LOW
-(HIGH = answer is clearly and directly in the policy. LOW = partial or inferred.)"""
+After your answer, on a new line write exactly one of:
+CONFIDENCE: HIGH — [one sentence: which section or rule directly supports this answer]
+CONFIDENCE: LOW — [one sentence: what is unclear, missing, or only partially covered]
+(HIGH = answer is clearly and directly stated in the policy. LOW = partial, inferred, or ambiguous.)"""
 
     last_error: Exception | None = None
 
@@ -215,15 +219,22 @@ CONFIDENCE: LOW
 
             full_response = response.content[0].text
 
-            if "CONFIDENCE: HIGH" in full_response:
-                confidence = "HIGH"
-                answer = full_response.replace("CONFIDENCE: HIGH", "").strip()
-            elif "CONFIDENCE: LOW" in full_response:
-                confidence = "LOW"
-                answer = full_response.replace("CONFIDENCE: LOW", "").strip()
+            # Parse confidence level + optional reason
+            # Handles: "CONFIDENCE: HIGH — reason", "CONFIDENCE: LOW - reason",
+            # or plain "CONFIDENCE: HIGH" with no reason.
+            conf_match = re.search(
+                r"CONFIDENCE:\s*(HIGH|LOW)(?:\s*[\u2014\u2013\-]+\s*(.+))?",
+                full_response,
+                re.IGNORECASE,
+            )
+            if conf_match:
+                confidence         = conf_match.group(1).upper()
+                confidence_reason  = (conf_match.group(2) or "").strip()
+                answer             = full_response[:conf_match.start()].strip()
             else:
-                confidence = "LOW"
-                answer = full_response.strip()
+                confidence        = "LOW"
+                confidence_reason = ""
+                answer            = full_response.strip()
 
             logger.info(
                 "[%s] LLM response: model=%s confidence=%s "
@@ -236,6 +247,7 @@ CONFIDENCE: LOW
             return _LLMResult(
                 answer=answer,
                 confidence=confidence,
+                confidence_reason=confidence_reason,
                 latency_ms=latency_ms,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
@@ -304,6 +316,7 @@ def write_audit_log(
         "source_document":         response.source or "none",
         "retrieval_score":         response.retrieval_score,
         "confidence":              response.confidence,
+        "confidence_reason":        response.confidence_reason,
         "escalated":               str(response.escalate),
         "latency_ms":              f"{response.latency_ms:.1f}",
         "input_tokens":            response.input_tokens,
@@ -358,14 +371,15 @@ def ask_policy(
     pipeline_start = time.monotonic()
 
     # Safe defaults — used if the pipeline exits early or raises unexpectedly
-    answer          = "An unexpected error occurred. Please contact HR or IT directly."
-    confidence      = "NONE"
-    source          = "none"
-    escalate        = True
-    retrieval_score = 0
-    input_tokens    = 0
-    output_tokens   = 0
-    cost_usd        = 0.0
+    answer             = "An unexpected error occurred. Please contact HR or IT directly."
+    confidence         = "NONE"
+    confidence_reason  = ""
+    source             = "none"
+    escalate           = True
+    retrieval_score    = 0
+    input_tokens       = 0
+    output_tokens      = 0
+    cost_usd           = 0.0
     g_input  = GuardrailResult(action=GuardrailAction.PASS, triggered_policy="none", reason="")
     g_output = GuardrailResult(action=GuardrailAction.PASS, triggered_policy="none", reason="")
     grounding_score: float | None = None
@@ -411,9 +425,10 @@ def ask_policy(
                         clean_question, chunk.content,
                         request_id=request_id, model=model,
                     )
-                    answer        = llm.answer
-                    confidence    = llm.confidence
-                    input_tokens  = llm.input_tokens
+                    answer             = llm.answer
+                    confidence         = llm.confidence
+                    confidence_reason  = llm.confidence_reason
+                    input_tokens       = llm.input_tokens
                     output_tokens = llm.output_tokens
                     source        = chunk.source
 
@@ -466,6 +481,7 @@ def ask_policy(
         answer=answer,
         source=source,
         confidence=confidence,
+        confidence_reason=confidence_reason,
         pii_removed=scrub_result.was_modified,
         pii_summary=scrub_result.summary,
         escalate=escalate,
@@ -515,6 +531,8 @@ if __name__ == "__main__":
         result = ask_policy(question, user)
         print(f"REQUEST_ID: {result.request_id}")
         print(f"CONFIDENCE: {result.confidence}")
+        if result.confidence_reason:
+            print(f"CONF WHY:   {result.confidence_reason}")
         print(f"SOURCE:     {result.source} (score: {result.retrieval_score})")
         print(f"LATENCY:    {result.latency_ms:.0f}ms")
         print(f"TOKENS:     {result.input_tokens} in / {result.output_tokens} out")
