@@ -204,6 +204,7 @@ with tab1:
 - How long do I have to submit an expense claim?
 - What happens if I get a rating of 2 on my performance review?
 - How many days of medical leave can I take without a doctor's note?
+- Am I allowed to take vacation during my notice period?
 
 **IT policy — normal queries:**
 - Can I install software on my company laptop?
@@ -213,11 +214,12 @@ with tab1:
 
 **Low confidence / guardrail WARN test:**
 - Can I take a mental health day?
-- Can I take vacation during my notice period?
+- What should I do if my manager gives me unfair feedback?
+- Can I work remotely from another country?
 
 **PII detection test — email + employee ID:**
 - My email is bob@company.com — am I allowed to work remotely?
-- My employee ID is EMP-12345, how much vacation do I have?
+- My employee ID is EMP-12345, what is the vacation policy?
 
 **PII detection test — phone + postal code:**
 - My number is 416-555-1234 — can I access the VPN remotely?
