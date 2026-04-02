@@ -1,0 +1,49 @@
+Remote Work Policy
+Last Updated: 2026-01-01
+============================================================
+
+## 1. Eligibility
+
+Employees who have completed at least 6 months of continuous employment and
+whose role is classified as remote-eligible by their department head may apply
+for a remote work arrangement.
+
+## 2. Equipment
+
+Employees approved for remote work will be issued a company laptop, headset,
+and docking station. All issued equipment remains company property and must be
+returned upon termination or role change. Employees must follow the Equipment
+Loan Agreement as defined in the IT Asset Policy.
+
+## 3. Data Security
+
+Remote employees must use the company-provided VPN for all access to internal
+systems. Connecting to public Wi-Fi without VPN is prohibited. Data handling
+during remote work is governed by the Data Classification Framework — see
+Section 4.
+
+## 4. Working Hours
+
+Remote employees are expected to be available and responsive during their
+team's core hours of 10:00 AM to 3:00 PM in their local time zone.
+Employees must attend all scheduled team meetings and flag scheduling
+conflicts to their manager at least 48 hours in advance.
+
+## 5. Performance and Accountability
+
+Remote employees are evaluated using the same performance criteria as
+on-site employees. Managers must conduct check-ins at least once per week.
+Performance improvement plans for remote employees follow the standard HR
+process documented in the Employee Handbook.
+
+## 6. International Remote Work
+
+Employees wishing to work remotely from outside their country of employment
+for more than 14 consecutive days must obtain written approval from their
+manager and HR. For international remote work, refer to the Global Mobility
+Policy for applicable rules.
+
+## 7. Policy Review
+
+This policy is reviewed annually by HR and Legal. Employees will be notified
+of any changes at least 30 days before they take effect.

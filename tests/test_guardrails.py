@@ -7,6 +7,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../council"))
 
 from guardrails import (
     GuardrailAction,
@@ -242,3 +243,101 @@ class TestScoreRelevance:
             "vacation days remote work expenses",
         )
         assert 0.0 < score < 1.0
+
+
+# ── TestComplianceFlagTypes ───────────────────────────────────────────────────
+
+_TESTS_DIR = os.path.join(os.path.dirname(__file__), "../policies/tests")
+
+
+class TestComplianceFlagTypes:
+    def test_exception_undefined_detected(self) -> None:
+        from a2a.nodes.compliance_agent import run_compliance_review
+
+        with open(os.path.join(_TESTS_DIR, "exception_test_policy.txt"), encoding="utf-8") as f:
+            content = f.read()
+
+        flags = run_compliance_review(content)
+        flag_types = [fl["type"] for fl in flags]
+
+        assert "EXCEPTION_UNDEFINED" in flag_types
+        assert sum(1 for t in flag_types if t == "EXCEPTION_UNDEFINED") >= 3
+        for fl in flags:
+            assert "type" in fl
+            assert "quote" in fl
+            assert "suggestion" in fl
+        exception_flags = [fl for fl in flags if fl["type"] == "EXCEPTION_UNDEFINED"]
+        assert any(
+            "exception" in fl["quote"].lower() or "discretion" in fl["quote"].lower()
+            for fl in exception_flags
+        )
+
+    def test_exception_undefined_not_false_positive(self) -> None:
+        from a2a.nodes.compliance_agent import run_compliance_review
+
+        # §6 of exception_test_policy — clear, no exception language
+        clean_rule = (
+            "Receipt Requirements\n\n"
+            "Receipts are required for all expenses over $25. "
+            "Receipts must show the vendor name, date, itemised amounts, and total paid. "
+            "Expenses submitted without required receipts will be automatically rejected."
+        )
+
+        flags = run_compliance_review(clean_rule)
+        flag_types = [fl["type"] for fl in flags]
+        assert "EXCEPTION_UNDEFINED" not in flag_types
+
+    def test_cross_reference_broken_detected(self) -> None:
+        from a2a.nodes.compliance_agent import run_compliance_review
+
+        with open(os.path.join(_TESTS_DIR, "cross_reference_test_policy.txt"), encoding="utf-8") as f:
+            content = f.read()
+
+        flags = run_compliance_review(content)
+        flag_types = [fl["type"] for fl in flags]
+
+        assert "CROSS_REFERENCE_BROKEN" in flag_types
+        assert sum(1 for t in flag_types if t == "CROSS_REFERENCE_BROKEN") >= 3
+        for fl in flags:
+            assert "type" in fl
+            assert "quote" in fl
+            assert "suggestion" in fl
+        xref_flags = [fl for fl in flags if fl["type"] == "CROSS_REFERENCE_BROKEN"]
+        assert any(
+            "knowledge base" in fl["suggestion"].lower() or "inline" in fl["suggestion"].lower()
+            for fl in xref_flags
+        )
+
+    def test_cross_reference_not_false_positive(self) -> None:
+        from a2a.nodes.compliance_agent import run_compliance_review
+
+        # §4 of cross_reference_test_policy — self-contained, no external references
+        clean_rule = (
+            "Working Hours\n\n"
+            "Remote employees are expected to be available and responsive during their "
+            "team's core hours of 10:00 AM to 3:00 PM in their local time zone. "
+            "Employees must attend all scheduled team meetings and flag scheduling "
+            "conflicts to their manager at least 48 hours in advance."
+        )
+
+        flags = run_compliance_review(clean_rule)
+        flag_types = [fl["type"] for fl in flags]
+        assert "CROSS_REFERENCE_BROKEN" not in flag_types
+
+    def test_both_flags_in_combined_policy(self) -> None:
+        from a2a.nodes.compliance_agent import run_compliance_review
+
+        combined = (
+            "Expense Policy\n\n"
+            "Expenses over $500 require VP approval unless an exception is granted "
+            "by management.\n\n"
+            "Data handling during remote work is governed by the Data Classification "
+            "Framework — see the Data Security Policy for details."
+        )
+
+        flags = run_compliance_review(combined)
+        flag_types = [fl["type"] for fl in flags]
+
+        assert "EXCEPTION_UNDEFINED" in flag_types
+        assert "CROSS_REFERENCE_BROKEN" in flag_types
+        assert len(flags) >= 2
