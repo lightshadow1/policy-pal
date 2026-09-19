@@ -3,4 +3,6 @@ streamlit>=1.32.0
 pandas>=2.0.0
 pyyaml>=6.0
 python-dotenv>=1.0.0
+opentelemetry-sdk>=1.44.0
+opentelemetry-exporter-otlp-proto-http>=1.44.0
 pytest>=8.0.0
