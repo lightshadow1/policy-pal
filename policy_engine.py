@@ -12,6 +12,8 @@ Demonstrates five enterprise LLM patterns:
 
 import csv
 import functools
+import hashlib
+import json
 import logging
 import os
 import re
@@ -23,17 +25,26 @@ from datetime import datetime
 
 import anthropic
 from dotenv import load_dotenv
+from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from guardrails import GuardrailAction, GuardrailResult, check_input, check_output
 from pii_scrubber import scrub
+from telemetry import get_event_logger, get_tracer, init_tracing
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# No-op unless POLICY_PAL_TRACE_FILE is set. Called at import so every entry
+# point (Streamlit app, compare_models, __main__) picks it up unchanged.
+init_tracing()
+_tracer = get_tracer()
+_event_logger = get_event_logger()
+
 # ── Config ────────────────────────────────────────────────────────────────────
 POLICIES_DIR = "policies/"
 AUDIT_LOG    = "audit_log.csv"
+AUDIT_RECORD = "audit_log.jsonl"
 MODEL        = "claude-haiku-4-5-20251001"
 SONNET_MODEL = os.getenv("SONNET_MODEL", "claude-sonnet-4-5-20250929")
 MAX_TOKENS   = 600
@@ -48,6 +59,69 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     "haiku":  {"input": 0.80,  "output": 4.00},
     "sonnet": {"input": 3.00,  "output": 15.00},
 }
+
+# ── Telemetry constants ───────────────────────────────────────────────────────
+# gen_ai.provider.name is the current convention; gen_ai.system is its
+# deprecated predecessor. Both are emitted for consumer compatibility.
+_GENAI_PROVIDER = "anthropic"
+_GENAI_AGENT    = "policy-pal"
+_API_HOST       = "api.anthropic.com"
+
+# Message content on spans is Opt-In in the GenAI conventions, and the spec warns
+# it is "likely to contain sensitive information including user/PII data".
+# Off unless POLICY_PAL_CAPTURE_CONTENT is set.
+_CAPTURE_CONTENT = os.getenv(
+    "POLICY_PAL_CAPTURE_CONTENT", ""
+).strip().lower() in ("1", "true", "yes", "on")
+# Where captured content goes. The GenAI conventions recommend events over span
+# attributes so content can be retained and access-controlled separately, and
+# the backends agree: Tempo truncates a span attribute at 2048 bytes mid-string
+# with no marker, while Loki takes a 256 KB line and rejects an oversize one
+# outright. "event" is the default for both reasons; "span" and "both" remain
+# available for a Tempo-only setup.
+_CONTENT_DESTINATION = os.getenv(
+    "POLICY_PAL_CONTENT_DESTINATION", "event"
+).strip().lower()
+if _CONTENT_DESTINATION not in ("event", "span", "both"):
+    logger.warning(
+        "Unrecognised POLICY_PAL_CONTENT_DESTINATION %r; using 'event'.",
+        _CONTENT_DESTINATION,
+    )
+    _CONTENT_DESTINATION = "event"
+_CONTENT_TO_SPAN  = _CONTENT_DESTINATION in ("span", "both")
+_CONTENT_TO_EVENT = _CONTENT_DESTINATION in ("event", "both")
+
+# Two caps, because the two destinations have different ceilings. The span cap
+# is set by Tempo's max_attribute_bytes; the event cap is set well inside Loki's
+# 256 KB line limit with room for the envelope and both messages.
+_CONTENT_MAX_CHARS       = int(os.getenv("POLICY_PAL_CONTENT_MAX_CHARS", "1800"))
+_EVENT_CONTENT_MAX_CHARS = int(
+    os.getenv("POLICY_PAL_EVENT_CONTENT_MAX_CHARS", "60000")
+)
+
+# gen_ai.client.inference.operation.details -- the event name from the GenAI
+# conventions. Verified against the registry, not recalled.
+_GENAI_EVENT_NAME = "gen_ai.client.inference.operation.details"
+
+# How `confidence` is arrived at. It is the model's own assessment of how
+# directly the retrieved policy text supports its answer -- a self-report about
+# wording overlap and specificity between question and document, NOT a
+# calibrated or externally validated probability. Recorded on every span that
+# carries a confidence value so the caveat travels with the data.
+_CONFIDENCE_METHOD = "llm_self_report"
+
+
+def _user_hash(user: str) -> str:
+    """
+    Stable, non-reversible handle for correlating one user's requests.
+
+    `user` is free text from a "Your name or employee ID" box, so it is PII in
+    its own right -- separate from message content and not covered by the
+    content-capture gate. Spans always carry the hash; the raw value is exported
+    only when content capture is explicitly enabled, and is always kept in the
+    audit record regardless.
+    """
+    return hashlib.sha256(user.encode("utf-8")).hexdigest()[:16]
 
 # ── Module-level shared state ─────────────────────────────────────────────────
 _audit_lock: threading.Lock          = threading.Lock()
@@ -120,6 +194,8 @@ class PolicyResponse:
     policy_generated_by: str = "manual"   # "council" | "manual"
     council_consensus:   str = "n/a"      # "unanimous" | "contested" | "unknown" | "n/a"
     compliance_flags:    int = 0          # count of compliance flags at generation time
+    # ── Why the pipeline stopped (telemetry only — not written to the CSV) ────
+    termination_reason: str = "completed"
     # ── Timestamp ────────────────────────────────────────────────────────────
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -283,6 +359,111 @@ def find_relevant_policy(question: str, docs: dict[str, str]) -> PolicyChunk | N
     return None
 
 
+# ── GenAI message content ───────────────────────────────────────────────
+def _messages_attr(role: str, text: str, limit: int | None = None) -> str:
+    """
+    Serialize one message into the shape gen_ai.{input,output}.messages expects:
+    ``[{"role": ..., "parts": [{"type": "text", "content": ...}]}]``.
+
+    OTel span attributes hold only primitives, so this is the JSON-string form
+    the conventions permit when structured values are unsupported.
+
+    Truncation is marked inline rather than silently applied -- a clipped
+    transcript that does not say it was clipped is worse than no transcript.
+    """
+    limit = _CONTENT_MAX_CHARS if limit is None else limit
+    if len(text) > limit:
+        # Elide the middle, not the tail. The grounded prompt puts the policy
+        # document in the middle and the employee's question at the very end,
+        # so clipping the tail would drop the one part an auditor needs.
+        #
+        # The marker counts against the budget: without subtracting it, an input
+        # just over the limit produces a LARGER attribute than leaving it alone.
+        # Width is computed from `total` because both numbers are <= total.
+        total  = len(text)
+        marker = f"\n\u2026[elided {total} of {total} chars]\u2026\n"
+        keep   = (limit - len(marker)) // 2
+        if keep <= 0:
+            # No room for any content. Note that text[-0:] returns the WHOLE
+            # string, so this branch must not fall through to the slice below.
+            text = f"\u2026[elided all {total} chars]\u2026"
+        else:
+            text = (
+                text[:keep]
+                + f"\n\u2026[elided {total - 2 * keep} of {total} chars]\u2026\n"
+                + text[total - keep:]
+            )
+    return json.dumps(
+        [{"role": role, "parts": [{"type": "text", "content": text}]}],
+        ensure_ascii=False,
+    )
+
+
+# ── GenAI inference event ───────────────────────────────────────────────
+def _emit_inference_event(
+    *,
+    request_id: str,
+    model:      str,
+    prompt:     str,
+    response_text: str | None,
+    attributes: dict,
+) -> None:
+    """
+    Emit the GenAI inference event carrying message content.
+
+    Emitted inside the active span, so the record picks up the trace and span id
+    from context and joins back to the trace it describes -- content lives on the
+    logs signal, correlation stays intact.
+
+    Content is scrubbed before it gets here for the response, and upstream for
+    the prompt. Failures are swallowed: telemetry must never break the request.
+    """
+    if not _CONTENT_TO_EVENT:
+        return
+    try:
+        body = dict(attributes)
+        # The OTLP `eventName` field does not survive the collector -> Loki hop
+        # (verified by reading it back), so carry it as an attribute too. Cheap,
+        # and without it the events are unfilterable by type in Loki.
+        body["event.name"] = _GENAI_EVENT_NAME
+        body["policy_pal.request_id"] = request_id
+        body["gen_ai.input.messages"] = _messages_attr(
+            "user", prompt, _EVENT_CONTENT_MAX_CHARS
+        )
+        if response_text is not None:
+            body["gen_ai.output.messages"] = _messages_attr(
+                "assistant", response_text, _EVENT_CONTENT_MAX_CHARS
+            )
+        _event_logger.emit(
+            event_name=_GENAI_EVENT_NAME,
+            body=f"{model} inference",
+            attributes=body,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[%s] Inference event emit failed: %s", request_id, exc)
+
+
+# ── LLM error classification ──────────────────────────────────────────────────
+def _classify_llm_error(exc: Exception) -> tuple[str, str]:
+    """
+    Map an exception from the provider SDK to (termination_reason, event_class).
+
+    ``event_class`` separates infrastructure failures (our side / the network)
+    from provider-side rejections (their side). A connection timeout and a rate
+    limit both cause a retry, but only the latter is compliance-relevant, and
+    the span structure alone can't tell them apart.
+    """
+    if isinstance(exc, anthropic.APITimeoutError):
+        return "timeout", "infrastructure"
+    if isinstance(exc, anthropic.APIConnectionError):
+        return "connection_error", "infrastructure"
+    if isinstance(exc, anthropic.RateLimitError):
+        return "rate_limit", "provider_rejection"
+    if isinstance(exc, anthropic.APIStatusError):
+        return f"http_{exc.status_code}", "provider_rejection"
+    return "api_error", "provider_rejection"
+
+
 # ── LLM call ──────────────────────────────────────────────────────────────────
 def ask_llm(
     question:   str,
@@ -319,64 +500,180 @@ CONFIDENCE: LOW — [one sentence: what is unclear, missing, or only partially c
     last_error: Exception | None = None
 
     for attempt in range(_MAX_RETRIES + 1):
-        try:
-            start = time.monotonic()
-            response = _get_client().messages.create(
-                model=model,
-                max_tokens=MAX_TOKENS,
-                timeout=_REQUEST_TIMEOUT,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            latency_ms = (time.monotonic() - start) * 1000
+        backoff_s = 0.0
 
-            full_response = response.content[0].text
+        # One CLIENT span per HTTP attempt, nested under the request span opened
+        # by ask_policy. Span name per convention: "{operation} {request.model}".
+        with _tracer.start_as_current_span(
+            f"chat {model}",
+            kind=SpanKind.CLIENT,
+            # Errors are recorded manually below, with classification. Without
+            # this, use_span records a second exception event on the way out and
+            # overwrites the status description with the LLMError wrapper.
+            record_exception=False,
+            set_status_on_exception=False,
+            attributes={
+                "gen_ai.operation.name":       "chat",
+                "gen_ai.provider.name":        _GENAI_PROVIDER,
+                "gen_ai.system":               _GENAI_PROVIDER,   # deprecated alias
+                "gen_ai.request.model":        model,
+                "gen_ai.request.max_tokens":   MAX_TOKENS,
+                "server.address":              _API_HOST,
+                "policy_pal.request_id":       request_id,
+                "policy_pal.llm.attempt":      attempt + 1,
+                "policy_pal.llm.max_attempts": _MAX_RETRIES + 1,
+            },
+        ) as span:
+            if _CAPTURE_CONTENT:
+                # The question was PII-scrubbed before it reached this prompt,
+                # so this is the redacted form as actually sent to the provider.
+                # The span copy is capped to survive Tempo; the event copy below
+                # carries the full text.
+                span.set_attribute("policy_pal.content.captured", True)
+                span.set_attribute(
+                    "policy_pal.content.destination", _CONTENT_DESTINATION
+                )
+                if _CONTENT_TO_SPAN:
+                    span.set_attribute(
+                        "gen_ai.input.messages", _messages_attr("user", prompt)
+                    )
+            try:
+                start = time.monotonic()
+                response = _get_client().messages.create(
+                    model=model,
+                    max_tokens=MAX_TOKENS,
+                    timeout=_REQUEST_TIMEOUT,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                latency_ms = (time.monotonic() - start) * 1000
 
-            # Parse confidence level + optional reason
-            # Handles: "CONFIDENCE: HIGH — reason", "CONFIDENCE: LOW - reason",
-            # or plain "CONFIDENCE: HIGH" with no reason.
-            conf_match = re.search(
-                r"CONFIDENCE:\s*(HIGH|LOW)(?:\s*[\u2014\u2013\-]+\s*(.+))?",
-                full_response,
-                re.IGNORECASE,
-            )
-            if conf_match:
-                confidence         = conf_match.group(1).upper()
-                confidence_reason  = (conf_match.group(2) or "").strip()
-                answer             = full_response[:conf_match.start()].strip()
-            else:
-                confidence        = "LOW"
-                confidence_reason = ""
-                answer            = full_response.strip()
+                full_response = response.content[0].text
 
-            logger.info(
-                "[%s] LLM response: model=%s confidence=%s "
-                "tokens=%d/%d latency=%.0fms",
-                request_id, model, confidence,
-                response.usage.input_tokens,
-                response.usage.output_tokens,
-                latency_ms,
-            )
-            return _LLMResult(
-                answer=answer,
-                confidence=confidence,
-                confidence_reason=confidence_reason,
-                latency_ms=latency_ms,
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
-            )
+                # Parse confidence level + optional reason
+                # Handles: "CONFIDENCE: HIGH — reason", "CONFIDENCE: LOW - reason",
+                # or plain "CONFIDENCE: HIGH" with no reason.
+                conf_match = re.search(
+                    r"CONFIDENCE:\s*(HIGH|LOW)(?:\s*[\u2014\u2013\-]+\s*(.+))?",
+                    full_response,
+                    re.IGNORECASE,
+                )
+                if conf_match:
+                    confidence         = conf_match.group(1).upper()
+                    confidence_reason  = (conf_match.group(2) or "").strip()
+                    answer             = full_response[:conf_match.start()].strip()
+                else:
+                    confidence        = "LOW"
+                    confidence_reason = ""
+                    answer            = full_response.strip()
 
-        except (anthropic.RateLimitError, anthropic.APIConnectionError) as e:
-            logger.warning(
-                "[%s] LLM transient error (attempt %d/%d): %s",
-                request_id, attempt + 1, _MAX_RETRIES + 1, e,
-            )
-            last_error = e
-            if attempt < _MAX_RETRIES:
-                time.sleep(_RETRY_BASE_DELAY * (2 ** attempt))
+                stop_reason = response.stop_reason or "unknown"
+                span.set_attributes({
+                    "gen_ai.response.id":             response.id,
+                    "gen_ai.response.model":          response.model,
+                    "gen_ai.response.finish_reasons": [stop_reason],
+                    "gen_ai.usage.input_tokens":      response.usage.input_tokens,
+                    "gen_ai.usage.output_tokens":     response.usage.output_tokens,
+                    "policy_pal.llm.termination_reason": stop_reason,
+                    # Anthropic's "refusal" stop reason is a provider-side
+                    # decline, not an infrastructure failure.
+                    "policy_pal.llm.event_class": (
+                        "provider_rejection" if stop_reason == "refusal"
+                        else "completed"
+                    ),
+                    "policy_pal.confidence":        confidence,
+                    "policy_pal.confidence.method": _CONFIDENCE_METHOD,
+                })
+                if _CAPTURE_CONTENT:
+                    # Unlike the input, the raw reply has not passed any PII
+                    # filter yet -- the output guardrail runs later, in
+                    # ask_policy. Scrub before it leaves the process.
+                    out = scrub(full_response)
+                    span.set_attribute(
+                        "policy_pal.content.output_redacted", out.was_modified
+                    )
+                    if out.was_modified:
+                        span.set_attribute(
+                            "policy_pal.content.output_redactions", out.summary
+                        )
+                    if _CONTENT_TO_SPAN:
+                        span.set_attribute(
+                            "gen_ai.output.messages",
+                            _messages_attr("assistant", out.scrubbed),
+                        )
+                    # Full content on the logs signal. Emitted inside this span,
+                    # so it carries this trace and span id.
+                    _emit_inference_event(
+                        request_id=request_id,
+                        model=model,
+                        prompt=prompt,
+                        response_text=out.scrubbed,
+                        attributes={
+                            "gen_ai.operation.name":       "chat",
+                            "gen_ai.provider.name":        _GENAI_PROVIDER,
+                            "gen_ai.request.model":        model,
+                            "gen_ai.response.model":       response.model,
+                            "gen_ai.response.id":          response.id,
+                            "gen_ai.usage.input_tokens":   response.usage.input_tokens,
+                            "gen_ai.usage.output_tokens":  response.usage.output_tokens,
+                            "server.address":              _API_HOST,
+                            "policy_pal.llm.attempt":      attempt + 1,
+                            "policy_pal.content.output_redacted": out.was_modified,
+                        },
+                    )
+                span.set_status(Status(StatusCode.OK))
 
-        except anthropic.APIError as e:
-            logger.error("[%s] LLM non-retryable error: %s", request_id, e)
-            raise LLMError(str(e)) from e
+                logger.info(
+                    "[%s] LLM response: model=%s confidence=%s "
+                    "tokens=%d/%d latency=%.0fms",
+                    request_id, model, confidence,
+                    response.usage.input_tokens,
+                    response.usage.output_tokens,
+                    latency_ms,
+                )
+                return _LLMResult(
+                    answer=answer,
+                    confidence=confidence,
+                    confidence_reason=confidence_reason,
+                    latency_ms=latency_ms,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                )
+
+            except (anthropic.RateLimitError, anthropic.APIConnectionError) as e:
+                reason, event_class = _classify_llm_error(e)
+                span.set_attributes({
+                    "error.type":                        type(e).__qualname__,
+                    "policy_pal.llm.termination_reason": reason,
+                    "policy_pal.llm.event_class":        event_class,
+                    "policy_pal.llm.will_retry":         attempt < _MAX_RETRIES,
+                })
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                logger.warning(
+                    "[%s] LLM transient error (attempt %d/%d): %s",
+                    request_id, attempt + 1, _MAX_RETRIES + 1, e,
+                )
+                last_error = e
+                if attempt < _MAX_RETRIES:
+                    backoff_s = _RETRY_BASE_DELAY * (2 ** attempt)
+
+            except anthropic.APIError as e:
+                reason, event_class = _classify_llm_error(e)
+                span.set_attributes({
+                    "error.type":                        type(e).__qualname__,
+                    "policy_pal.llm.termination_reason": reason,
+                    "policy_pal.llm.event_class":        event_class,
+                    "policy_pal.llm.will_retry":         False,
+                })
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                logger.error("[%s] LLM non-retryable error: %s", request_id, e)
+                raise LLMError(str(e)) from e
+
+        # Backoff sits outside the span so span duration reflects the HTTP
+        # attempt, not the wait between attempts.
+        if backoff_s:
+            time.sleep(backoff_s)
 
     raise LLMError(
         f"LLM call failed after {_MAX_RETRIES + 1} attempt(s)"
@@ -466,8 +763,97 @@ def write_audit_log(
         )
 
 
+# ── Audit record ──────────────────────────────────────────────────────────────
+AUDIT_SCHEMA_VERSION = 1
+
+
+def write_audit_record(
+    *,
+    response:          PolicyResponse,
+    user:              str,
+    scrubbed_question: str,
+    model:             str,
+) -> None:
+    """
+    Append the full audit record for one request as a JSON line.
+
+    This is the system of record, distinct from the spans. Traces are for
+    operations: they are sampled-by-design stores, rewritten by compaction,
+    TTL'd well short of the retention a regulator expects, and -- as measured
+    against this stack's Tempo -- they silently truncate long attributes
+    mid-string. None of that is acceptable for evidence.
+
+    So content here is scrubbed but NOT truncated: the 1800-character cap on
+    spans exists to fit Tempo's max_attribute_bytes, and does not apply to a
+    record store.
+
+    JSONL stands in for the real target. In production: S3 with Object Lock in
+    compliance mode, where retention is enforced by the storage layer rather
+    than by convention, joined back to the traces on ``request_id``.
+
+    Failures are logged, never raised -- audit must not break the request path.
+    """
+    record = {
+        "schema_version": AUDIT_SCHEMA_VERSION,
+        "timestamp":      response.timestamp,
+        "request_id":     response.request_id,
+        "user":           user,
+        "outcome": {
+            "termination_reason": response.termination_reason,
+            "escalated":          response.escalate,
+        },
+        "question": {
+            "scrubbed":     scrubbed_question,
+            "pii_detected": response.pii_removed,
+            "pii_summary":  response.pii_summary,
+        },
+        "answer": {
+            "text":      response.answer,
+            "delivered": response.guardrail_output_action != "BLOCK",
+        },
+        "retrieval": {
+            "source": response.source,
+            "score":  response.retrieval_score,
+        },
+        "confidence": {
+            "value":  response.confidence,
+            "reason": response.confidence_reason,
+            # Not a calibrated probability -- see _CONFIDENCE_METHOD.
+            "method": _CONFIDENCE_METHOD,
+        },
+        "guardrails": {
+            "input_action":    response.guardrail_input_action,
+            "output_action":   response.guardrail_output_action,
+            "reason":          response.guardrail_reason,
+            "grounding_score": response.grounding_score,
+            "relevance_score": response.relevance_score,
+        },
+        "model": {
+            "provider":      _GENAI_PROVIDER,
+            "id":            model,
+            "input_tokens":  response.input_tokens,
+            "output_tokens": response.output_tokens,
+            "cost_usd":      response.cost_usd,
+            "latency_ms":    round(response.latency_ms, 1),
+        },
+        "policy_provenance": {
+            "generated_by":     response.policy_generated_by,
+            "council_consensus": response.council_consensus,
+            "compliance_flags": response.compliance_flags,
+        },
+    }
+    try:
+        with _audit_lock:
+            with open(AUDIT_RECORD, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as e:
+        logger.error(
+            "Failed to write audit record [%s]: %s", response.request_id, e
+        )
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
-def ask_policy(
+def _run_pipeline(
     question: str,
     user:     str = "anonymous",
     model:    str = MODEL,
@@ -501,6 +887,7 @@ def ask_policy(
     grounding_score: float | None = None
     relevance_score: float | None = None
     _source_meta: dict = {}   # populated when a matching policy chunk is found
+    termination_reason = "completed"
 
     # Step 1: PII scrubbing (always runs; result needed for audit log)
     scrub_result   = scrub(question)
@@ -517,6 +904,7 @@ def ask_policy(
             answer     = g_input.blocked_message or "Your request could not be processed."
             confidence = "NONE"
             escalate   = True
+            termination_reason = "guardrail_input_block"
         else:
             # Step 3: Retrieval
             docs            = load_policies(POLICIES_DIR)
@@ -535,6 +923,7 @@ def ask_policy(
                 )
                 confidence = "NONE"
                 escalate   = True
+                termination_reason = "no_retrieval"
             else:
                 # Step 4: LLM call with graceful degradation
                 try:
@@ -562,11 +951,13 @@ def ask_policy(
                         answer     = g_output.blocked_message or answer
                         confidence = "NONE"
                         escalate   = True
+                        termination_reason = "guardrail_output_block"
                     elif g_output.action == GuardrailAction.WARN:
                         if g_output.modified_text:
                             answer = g_output.modified_text
                         confidence = "LOW"
                         escalate   = True
+                        termination_reason = "guardrail_output_warn"
                     else:
                         if g_output.modified_text:   # PII masked in output
                             answer = g_output.modified_text
@@ -581,6 +972,7 @@ def ask_policy(
                     confidence = "NONE"
                     escalate   = True
                     source     = chunk.source
+                    termination_reason = "llm_error"
 
         # Step 6: Cost
         cost_usd = calculate_cost(input_tokens, output_tokens, model)
@@ -589,6 +981,7 @@ def ask_policy(
         logger.error(
             "[%s] Unexpected pipeline error: %s", request_id, e, exc_info=True
         )
+        termination_reason = "pipeline_error"
 
     finally:
         latency_ms = (time.monotonic() - pipeline_start) * 1000
@@ -621,6 +1014,7 @@ def ask_policy(
         policy_generated_by=_source_meta.get("policy_generated_by", "manual"),
         council_consensus=_source_meta.get("council_consensus",   "n/a"),
         compliance_flags=_source_meta.get("compliance_flags",    0),
+        termination_reason=termination_reason,
     )
 
     # Step 7: Audit log (non-fatal)
@@ -631,8 +1025,116 @@ def ask_policy(
         scrubbed_question=clean_question,
         pii_summary=scrub_result.summary,
     )
+    write_audit_record(
+        response=response,
+        user=user,
+        scrubbed_question=clean_question,
+        model=model,
+    )
 
     return response
+
+
+# ── Request-boundary span ─────────────────────────────────────────────────────
+def _annotate_request_span(span, response: PolicyResponse) -> None:
+    """
+    Copy pipeline outcome onto the request span.
+
+    Fields with a GenAI convention equivalent use the convention name; the rest
+    (confidence, retrieval score, guardrail actions, cost) have no equivalent in
+    the spec and live under the ``policy_pal.*`` namespace rather than being
+    forced into ``gen_ai.*``.
+    """
+    if not span.is_recording():
+        return
+
+    model_invoked = response.input_tokens > 0 or response.output_tokens > 0
+
+    attributes: dict = {
+        "policy_pal.request_id":              response.request_id,
+        "policy_pal.termination_reason":      response.termination_reason,
+        "policy_pal.model_invoked":           model_invoked,
+        "policy_pal.escalated":               response.escalate,
+        "policy_pal.confidence":              response.confidence,
+        "policy_pal.confidence.method":       _CONFIDENCE_METHOD,
+        "policy_pal.retrieval.score":         response.retrieval_score,
+        "policy_pal.retrieval.source":        response.source,
+        "policy_pal.guardrail.input.action":  response.guardrail_input_action,
+        "policy_pal.guardrail.output.action": response.guardrail_output_action,
+        "policy_pal.pii.detected":            response.pii_removed,
+        "policy_pal.pii.summary":             response.pii_summary,
+        "policy_pal.cost.usd":                response.cost_usd,
+        "policy_pal.policy.generated_by":     response.policy_generated_by,
+        "policy_pal.policy.council_consensus": response.council_consensus,
+        "policy_pal.policy.compliance_flags": response.compliance_flags,
+    }
+    # Aggregate usage for the request. NOTE: also present on each child attempt
+    # span — sum across all spans double-counts. Use parent-only or child-only.
+    if model_invoked:
+        attributes["gen_ai.usage.input_tokens"]  = response.input_tokens
+        attributes["gen_ai.usage.output_tokens"] = response.output_tokens
+    if response.confidence_reason:
+        attributes["policy_pal.confidence_reason"] = response.confidence_reason
+    if response.guardrail_reason:
+        attributes["policy_pal.guardrail.reason"] = response.guardrail_reason
+    if response.grounding_score is not None:
+        attributes["policy_pal.grounding.score"] = response.grounding_score
+    if response.relevance_score is not None:
+        attributes["policy_pal.relevance.score"] = response.relevance_score
+
+    span.set_attributes(attributes)
+
+    # A guardrail block or an empty retrieval is a correct, intended outcome —
+    # not a span error. Only genuine failures get ERROR status.
+    if response.termination_reason in ("llm_error", "pipeline_error"):
+        span.set_attribute("error.type", response.termination_reason)
+        span.set_status(Status(StatusCode.ERROR, response.termination_reason))
+    else:
+        span.set_status(Status(StatusCode.OK))
+
+
+def ask_policy(
+    question: str,
+    user:     str = "anonymous",
+    model:    str = MODEL,
+) -> PolicyResponse:
+    """
+    Answer a policy question, wrapped in an OTel request span.
+
+    The span opens at the request boundary and always closes, including on paths
+    that never reach the model (guardrail block, empty retrieval, pipeline
+    error). The ``chat`` child span from :func:`ask_llm` appears only when the
+    model was actually invoked — so the parent proves the request was recorded
+    and the child's presence tells you whether an inference happened.
+    """
+    with _tracer.start_as_current_span(
+        f"invoke_agent {_GENAI_AGENT}",
+        kind=SpanKind.INTERNAL,
+        attributes={
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.provider.name":  _GENAI_PROVIDER,
+            "gen_ai.system":         _GENAI_PROVIDER,   # deprecated alias
+            "gen_ai.agent.name":     _GENAI_AGENT,
+            "gen_ai.request.model":  model,
+            # user.hash, not user.id -- see _user_hash.
+            "user.hash":             _user_hash(user),
+        },
+    ) as span:
+        if _CAPTURE_CONTENT:
+            span.set_attribute("user.id", user)
+        try:
+            response = _run_pipeline(question, user=user, model=model)
+        except Exception as e:
+            span.set_attributes({
+                "error.type": type(e).__qualname__,
+                "policy_pal.termination_reason": "unhandled_error",
+                "policy_pal.model_invoked": False,
+            })
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            raise
+        _annotate_request_span(span, response)
+        return response
 
 
 # ── CLI test ──────────────────────────────────────────────────────────────────

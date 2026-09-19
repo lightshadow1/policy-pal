@@ -15,7 +15,11 @@ build/
 
 # Runtime output
 audit_log.csv
+audit_log.jsonl
 comparison_report.csv
+traces.jsonl
+traces.events.jsonl
+report.html
 
 # Editor
 .DS_Store
